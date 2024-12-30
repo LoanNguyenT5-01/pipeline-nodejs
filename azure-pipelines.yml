@@ -1,0 +1,89 @@
+trigger:
+- main
+
+pool:
+  name: my-personal-computer
+
+variables:
+  ACR_NAME: 'loannguyenacr123' 
+  IMAGE_NAME: 'my-app'  
+  DOCKER_HUB_REPO: 'loannguyent5/my-app'  
+ 
+  DOCKERFILE_PATH: '$(Build.SourcesDirectory)/Dockerfile'  
+  K8S_CLUSTER_NAME: 'loannguyen-k8s'  
+  K8S_RESOURCE_GROUP: 'loannguyen-rg' 
+
+steps:
+# Check Dockerfile
+- script: |
+    echo "Checking Dockerfile path"
+    dir $(Build.SourcesDirectory)  
+  displayName: 'Check Dockerfile Path'
+
+# Build Docker image
+- script: |
+    echo "Building Docker image"
+    docker build -t $(DOCKER_HUB_REPO):$(Build.BuildId) -f $(DOCKERFILE_PATH) .
+  displayName: 'Build Docker Image'
+
+# Login docker
+- script: |
+    echo "Logging into Docker Registry"
+    docker login
+  displayName: 'Login to Docker Container Registry'
+
+# Push Docker image into Docker Hub
+- script: |
+    echo "Pushing Docker image"
+    docker push $(DOCKER_HUB_REPO):$(Build.BuildId)
+  displayName: 'Push Docker Image to Docker Hub'
+
+# Check push successfully
+- script: |
+    echo "Docker image pushed successfully: $(DOCKER_HUB_REPO):$(Build.BuildId)"
+  displayName: 'Verify Docker Image Push'
+
+# Logging into Azure Container Registry
+- script: |
+    echo "Logging into Azure Container Registry"
+    az acr login --name $(ACR_NAME)
+  displayName: 'Login to Azure Container Registry'
+
+# Build Docker image
+- script: |
+    echo "Building Docker image"
+    docker build -t $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(Build.BuildId) -f $(DOCKERFILE_PATH) .
+  displayName: 'Build Docker Image'
+
+#  Push Docker image into Azure Container Registry
+- script: |
+    echo "Pushing Docker image"
+    docker push $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(Build.BuildId)
+  displayName: 'Push Docker Image to ACR'
+
+- script: |
+    echo "Docker image pushed successfully: $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(Build.BuildId)"
+  displayName: 'Verify Docker Image Push'
+
+
+- script: |
+    echo "Logging into Kubernetes cluster"
+    az aks get-credentials --resource-group $(K8S_RESOURCE_GROUP) --name $(K8S_CLUSTER_NAME)
+  displayName: 'Login to Kubernetes'
+
+# Config Task PowerShell for deploy to Kubernetes
+- task: PowerShell@2
+  displayName: 'Deploy to Kubernetes'
+  inputs:
+    targetType: 'inline'
+    script: |
+      $IMAGE_TAG = "$(Build.BuildId)"
+
+      $deploymentYaml = Get-Content "$(Build.SourcesDirectory)/deployment.yaml" -Raw
+
+      $deploymentYaml = $deploymentYaml -replace '\$\{IMAGE_TAG\}', $IMAGE_TAG
+
+      $deploymentYaml | Set-Content "$(Build.SourcesDirectory)/deployment_updated.yaml"
+
+      kubectl apply -f "$(Build.SourcesDirectory)/deployment_updated.yaml"
+      kubectl apply -f "$(Build.SourcesDirectory)/service.yaml"
